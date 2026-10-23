@@ -6,6 +6,24 @@
  * Harness. This page manages the library under `~/.dsh/pets`, downloads from
  * petdex.dev, and edits the appearance settings the companion reads live.
  */
+// Probe: the Host logs this so "no settings section" can be traced without a
+// browser console. It must stay side-effect free — the module system re-executes
+// this file on every HMR reload and expects the registration below to follow.
+try {
+  const probe = JSON.stringify({ phase: 'eval', message: 'client module evaluated' })
+  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    navigator.sendBeacon('/petdex/api/client-log', probe)
+  } else if (typeof fetch === 'function') {
+    void fetch('/petdex/api/client-log', { method: 'POST', body: probe }).catch(() => {})
+  }
+} catch {
+  // a failed probe must not stop the module
+}
+
+// Registration is deliberately unconditional and idempotent-free, exactly like
+// every shipped client plugin: the module system invalidates a package's factory
+// before re-fetching its bundle, so a "already loaded" guard would leave the
+// re-import with no factory and the entry would fail to activate.
 window.__ModuleLoader__.load({
   id: 'dsh-petpal',
   factory(require) {
@@ -62,6 +80,17 @@ window.__ModuleLoader__.load({
       clickThrough: '点击穿透',
       clickThroughHint: '开启后鼠标可以穿过宠物，但也不能再拖动它。',
       showOnDesktop: '在桌面显示',
+      notifications: '通知',
+      enableNotifications: '启用通知',
+      webhookUrl: '企业微信 Webhook',
+      webhookUrlPlaceholder: '粘贴企业微信机器人的 Webhook 地址',
+      webhookUrlHint: '填写后，Agent 提问或工作完成时会通过企业微信机器人发送通知。',
+      webhookUrlInvalid: '地址必须以 https:// 开头，请粘贴企业微信机器人的完整 Webhook 地址。',
+      saveWebhook: '保存',
+      saving: '保存中…',
+      saved: '✓ 已保存，配置即刻生效',
+      saveFailed: '保存失败，请重试或查看控制台日志',
+      unsavedHint: '有未保存的修改，点「保存」或按回车写入。',
       missingApp: '桌面宠物组件不可用：当前系统没有对应的桌面组件，或安装包里缺少 desktop/ 下的程序。',
       failed: '出错了：{message}',
       confirmRemove: '删除「{name}」？桌面上正在显示的话会切到别的宠物。',
@@ -79,6 +108,8 @@ window.__ModuleLoader__.load({
       downloadInvalid: '无法识别。请粘贴 petdex.dev 的宠物页面链接，或链接最后一段的宠物标识。',
       libraryPath: '宠物目录',
       loading: '加载中…',
+      loadFailed: '宠物页面加载失败：{message}',
+      retry: '重试',
       hint: '拖动桌宠可以换位置；点一下它会挥挥手；气泡跟着 Harness 里的活动自动出现。从 petdex.dev 下载更多宠物。',
       kindCreature: '生物',
       appBadge: '桌面组件',
@@ -120,6 +151,17 @@ window.__ModuleLoader__.load({
       clickThrough: 'Click-through',
       clickThroughHint: 'The mouse passes through the pet — which also means it can no longer be dragged.',
       showOnDesktop: 'Show on the desktop',
+      notifications: 'Notifications',
+      enableNotifications: 'Enable Notifications',
+      webhookUrl: 'WeChat Work Webhook',
+      webhookUrlPlaceholder: 'Paste WeChat Work bot webhook URL',
+      webhookUrlHint: 'When configured, notifications are sent via WeChat Work bot when the agent asks questions or finishes work.',
+      webhookUrlInvalid: 'The address must start with https://. Paste the full WeChat Work bot webhook URL.',
+      saveWebhook: 'Save',
+      saving: 'Saving…',
+      saved: '✓ Saved — it takes effect immediately',
+      saveFailed: 'Could not save. Try again, or check the console log.',
+      unsavedHint: 'Unsaved changes — press Save or Enter to store them.',
       missingApp: 'The desktop companion is unavailable: there is no companion for this platform, or the install is missing the program under desktop/.',
       failed: 'Something went wrong: {message}',
       confirmRemove: 'Remove "{name}"? If it is on the desktop, another pet takes over.',
@@ -137,6 +179,8 @@ window.__ModuleLoader__.load({
       downloadInvalid: 'Not recognized. Paste a petdex.dev pet page URL, or the identifier at the end of that URL.',
       libraryPath: 'Pet folder',
       loading: 'Loading…',
+      loadFailed: 'The pet page failed to load: {message}',
+      retry: 'Retry',
       hint: 'Drag the pet to move it, click it to say hello, and bubbles follow activity in Harness. Download more from petdex.dev.',
       kindCreature: 'creature',
       appBadge: 'Desktop companion',
@@ -165,6 +209,11 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Record a successful milestone next to the errors, for Host-side tracing. */
+    function reportMilestone(phase, message) {
+      reportClientError(phase, { message })
+    }
+
     function interpolate(template, vars) {
       if (!vars) return template
       return String(template).replace(/\{(\w+)\}/g, (whole, key) =>
@@ -187,6 +236,14 @@ window.__ModuleLoader__.load({
       danger: token('state-error-primary'),
       success: token('state-success-primary'),
       warn: token('state-warn-primary'),
+    }
+
+    // The preview canvas is always white (it shows how the bubble looks on the
+    // desktop), so everything drawn on it uses fixed colours instead of theme
+    // tokens — theme tokens would go light-on-white in dark mode.
+    const CANVAS = {
+      background: '#ffffff',
+      border: '#8f97a4',
     }
 
     function colorRgb(hex) {
@@ -610,15 +667,89 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(null)
 
       // Refresh on mount: the desktop app or another window can change ui.json.
+      // The page can mount before the Host half has registered /petdex (the web
+      // server answers first), so a failure is retried with backoff instead of
+      // leaving the section on "加载中…" until the plugin is toggled by hand.
+      const [loadError, setLoadError] = React.useState(null)
+      const [reloadTick, setReloadTick] = React.useState(0)
+
+      // A tab that was left open across a Harness restart keeps its stale state;
+      // reload it when it becomes visible again instead of staying broken.
       React.useEffect(() => {
-        void loadState(true).catch(() => {})
+        if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return undefined
+        const onVisible = () => {
+          if (document.visibilityState === 'visible') void loadState(true).catch(() => {})
+        }
+        document.addEventListener('visibilitychange', onVisible)
+        return () => document.removeEventListener('visibilitychange', onVisible)
       }, [])
+
+      React.useEffect(() => {
+        let cancelled = false
+        let timer = 0
+        const attempt = tries => {
+          loadState(true)
+            .then(() => {
+              if (!cancelled) setLoadError(null)
+            })
+            .catch(error => {
+              if (cancelled) return
+              setLoadError(String(error?.message ?? error))
+              if (tries < 8) timer = window.setTimeout(() => attempt(tries + 1), Math.min(400 * (tries + 1), 3000))
+            })
+        }
+        attempt(0)
+        return () => {
+          cancelled = true
+          window.clearTimeout(timer)
+        }
+      }, [reloadTick])
 
       const [actionError, setActionError] = React.useState(null)
       const [identifier, setIdentifier] = React.useState('')
       const [preview, setPreview] = React.useState(null)
       const [lookingUp, setLookingUp] = React.useState(false)
       const [lookupError, setLookupError] = React.useState(null)
+
+      // Webhook field is an explicit draft: nothing is written until 保存 is
+      // pressed, so the button (and its 已保存 feedback) matches what happened.
+      const savedWebhook = store?.ui?.webhookUrl ?? ''
+      const [webhookDraft, setWebhookDraft] = React.useState(savedWebhook)
+      const [webhookNotice, setWebhookNotice] = React.useState(null)
+      const noticeTimer = React.useRef(0)
+
+
+      React.useEffect(() => {
+        setWebhookDraft(savedWebhook)
+      }, [savedWebhook])
+
+      React.useEffect(
+        () => () => {
+          window.clearTimeout(noticeTimer.current)
+        },
+        [],
+      )
+
+      const webhookChanged = webhookDraft.trim() !== savedWebhook
+      const webhookInvalid = webhookDraft.trim() !== '' && !/^https:\/\//i.test(webhookDraft.trim())
+
+      const flashWebhookNotice = (kind, text) => {
+        window.clearTimeout(noticeTimer.current)
+        setWebhookNotice({ kind, text })
+        noticeTimer.current = window.setTimeout(() => setWebhookNotice(null), 2600)
+      }
+
+      const saveWebhook = async () => {
+        if (webhookInvalid || busy !== null) return
+        const value = webhookDraft.trim()
+        const data = await setConfig({ webhookUrl: value })
+        if (data === null) {
+          flashWebhookNotice('error', translate('saveFailed'))
+          return
+        }
+        setWebhookDraft(value)
+        flashWebhookNotice('success', translate('saved'))
+      }
 
       const activePet = (store?.pets ?? []).find(pet => pet.slug === store.active)
 
@@ -637,6 +768,16 @@ window.__ModuleLoader__.load({
       }
 
       const setConfig = patch => act('petdex/api/config', { patch }, 'config')
+
+      // Turning notifications on also commits a pending, valid URL, so the
+      // switch never leaves the user with "on but nothing configured".
+      const toggleNotifications = async enabled => {
+        const draft = webhookDraft.trim()
+        const patch = { enableNotifications: enabled }
+        if (enabled && webhookChanged && !webhookInvalid) patch.webhookUrl = draft
+        const data = await setConfig(patch)
+        if (data !== null && patch.webhookUrl !== undefined) setWebhookDraft(draft)
+      }
 
       const toggleDesktop = async enabled => {
         await act('petdex/api/desktop', { enabled }, 'desktop')
@@ -684,7 +825,25 @@ window.__ModuleLoader__.load({
       }
 
       if (store === null) {
-        return h('div', { style: styles.section }, h('p', { style: styles.empty }, translate('loading')))
+        return h(
+          'div',
+          { style: { ...styles.section, gap: '10px' } },
+          h('p', { style: styles.empty }, loadError === null ? translate('loading') : translate('loadFailed', { message: loadError })),
+          loadError === null
+            ? null
+            : h(
+                'button',
+                {
+                  type: 'button',
+                  style: { ...styles.quietButton, alignSelf: 'flex-start' },
+                  onClick: () => {
+                    setLoadError(null)
+                    setReloadTick(tick => tick + 1)
+                  },
+                },
+                translate('retry'),
+              ),
+        )
       }
 
       const ui = store.ui
@@ -738,100 +897,164 @@ window.__ModuleLoader__.load({
           ),
           h('p', { style: { ...styles.empty, marginTop: '8px' } }, translate('restartHint')),
           store.appAvailable ? null : h('p', { style: { ...styles.error, marginTop: '8px' } }, translate('missingApp')),
+          // Preview: the "预览" caption and the pet name sit above the pet; the
+          // pet is on the left and the bordered bubble canvas beside it.
           h(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '14px', marginTop: '12px' } },
-            h('div', { style: { ...styles.thumb, width: '86px', height: '96px', flex: 'none' } },
-              activePet === undefined
-                ? null
-                : h(Sprite, { src: spriteUrl(activePet), scale: 0.4, playing: true }),
+            { style: { marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '6px' } },
+            h(
+              'div',
+              { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
+              h(
+                'span',
+                {
+                  style: {
+                    flex: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    height: '18px',
+                    padding: '0 8px',
+                    borderRadius: '999px',
+                    border: `1px solid ${COLORS.border}`,
+                    background: COLORS.layer2,
+                    fontSize: '10px',
+                    lineHeight: 1,
+                    letterSpacing: '0.04em',
+                    color: COLORS.muted,
+                  },
+                },
+                h('span', {
+                  style: {
+                    width: '5px',
+                    height: '5px',
+                    borderRadius: '50%',
+                    background: COLORS.brand,
+                    display: 'inline-block',
+                  },
+                }),
+                translate('preview'),
+              ),
+              h(
+                'span',
+                {
+                  style: {
+                    fontSize: '16px',
+                    fontWeight: 700,
+                    letterSpacing: '0.01em',
+                    lineHeight: 1.4,
+                    color: COLORS.text,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  },
+                },
+                activePet?.name ?? '—',
+              ),
             ),
             h(
               'div',
-              { style: { flex: 1, minWidth: 0 } },
-              h('div', { style: { fontSize: '12px', color: COLORS.muted } }, translate('preview')),
-              h('div', { style: { ...styles.cardName, fontSize: '14px' } }, activePet?.name ?? '—'),
-              (() => {
-                const alpha = Math.min(100, Math.max(0, Number(ui.bubbleOpacity) || 0)) / 100
-                const bg = /^#[0-9a-f]{6}$/i.test(ui.bubbleColor) ? ui.bubbleColor : '#0f0f0f'
-                const fg = /^#[0-9a-f]{6}$/i.test(ui.bubbleTextColor) ? ui.bubbleTextColor : '#ffffff'
-                return h(
-                  'div',
-                  {
-                    style: {
-                      marginTop: '8px',
-                      padding: '16px',
-                      borderRadius: '12px',
-                      background: '#ffffff',
-                      border: `1px solid ${COLORS.border}`,
-                      display: 'flex',
-                      justifyContent: 'flex-end',
-                    },
+              { style: { display: 'flex', alignItems: 'center', gap: '14px' } },
+              h(
+                'div',
+                {
+                  style: {
+                    flex: 'none',
+                    width: '92px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   },
-                  h(
+                },
+                activePet === undefined ? null : h(Sprite, { src: spriteUrl(activePet), scale: 0.42, playing: true }),
+              ),
+              h(
+                'div',
+                {
+                  style: {
+                    flex: 1,
+                    minWidth: 0,
+                    border: `2px solid ${CANVAS.border}`,
+                    borderRadius: '12px',
+                    background: CANVAS.background,
+                    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.14)',
+                    padding: '16px',
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                  },
+                },
+                (() => {
+                  const alpha = Math.min(100, Math.max(0, Number(ui.bubbleOpacity) || 0)) / 100
+                  const bg = /^#[0-9a-f]{6}$/i.test(ui.bubbleColor) ? ui.bubbleColor : '#0f0f0f'
+                  const fg = /^#[0-9a-f]{6}$/i.test(ui.bubbleTextColor) ? ui.bubbleTextColor : '#ffffff'
+                  return h(
                     'div',
-                    {
-                      style: {
-                        width: `${ui.bubbleMaxWidth}px`,
-                        maxWidth: '100%',
-                        fontSize: `${ui.bubbleFontSize}px`,
-                        lineHeight: 1.45,
-                        padding: '4px 8px 5px',
-                        borderRadius: '12px',
-                        background: bg,
-                        color: fg,
-                        textShadow: alpha < 0.5 ? (fgLight ? '0 1px 3px rgba(0,0,0,0.8)' : '0 1px 3px rgba(255,255,255,0.65)') : 'none',
-                        display: ui.bubbles ? 'block' : 'none',
-                      },
-                    },
+                    { style: { display: 'flex', justifyContent: 'flex-end' } },
                     h(
                       'div',
-                      { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-                      h('span', {
+                      {
                         style: {
-                          width: '10px',
-                          height: '10px',
-                          borderRadius: '50%',
-                          border: '1.5px solid transparent',
-                          borderTopColor: fg,
-                          borderRightColor: fg,
-                          display: 'inline-block',
+                          width: `${ui.bubbleMaxWidth}px`,
+                          maxWidth: '100%',
+                          fontSize: `${ui.bubbleFontSize}px`,
+                          lineHeight: 1.45,
+                          padding: '4px 8px 5px',
+                          borderRadius: '12px',
+                          background: bg,
+                          color: fg,
+                          textShadow: alpha < 0.5 ? (lightColor(fg) ? '0 1px 3px rgba(0,0,0,0.8)' : '0 1px 3px rgba(255,255,255,0.65)') : 'none',
+                          display: ui.bubbles ? 'block' : 'none',
                         },
-                      }),
+                      },
                       h(
-                        'span',
+                        'div',
+                        { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                        h('span', {
+                          style: {
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            border: '1.5px solid transparent',
+                            borderTopColor: fg,
+                            borderRightColor: fg,
+                            display: 'inline-block',
+                          },
+                        }),
+                        h(
+                          'span',
+                          {
+                            style: {
+                              flex: 1,
+                              minWidth: 0,
+                              fontSize: '1em',
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            },
+                          },
+                          translate('previewTitle'),
+                        ),
+                      ),
+                      h(
+                        'div',
                         {
                           style: {
-                            flex: 1,
-                            minWidth: 0,
-                            fontSize: '1em',
-                            fontWeight: 600,
+                            marginTop: '1px',
+                            paddingLeft: '16px',
+                            fontSize: '0.94em',
+                            opacity: 0.72,
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                           },
                         },
-                        translate('previewTitle'),
+                        translate('previewText'),
                       ),
                     ),
-                    h(
-                      'div',
-                      {
-                        style: {
-                          marginTop: '1px',
-                          paddingLeft: '16px',
-                          fontSize: '0.94em',
-                          opacity: 0.72,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        },
-                      },
-                      translate('previewText'),
-                    ),
-                  ),
-                )
-              })(),
+                  )
+                })(),
+              ),
             ),
           ),
         ),
@@ -1147,6 +1370,96 @@ window.__ModuleLoader__.load({
           ),
         ),
 
+        // Notifications ------------------------------------------------------------
+        h(
+          'section',
+          null,
+          h('h3', { style: styles.groupTitle }, translate('notifications')),
+          h(
+            'div',
+            { style: { ...styles.panel, paddingTop: '4px', paddingBottom: '4px' } },
+            h(
+              'div',
+              { style: { ...styles.settingRow, borderTop: 'none' } },
+              h('span', { style: styles.settingLabel }, translate('enableNotifications')),
+              h('div', { style: { flex: 1, display: 'flex', justifyContent: 'flex-end' } },
+                h(Switch, {
+                  checked: ui.enableNotifications === true,
+                  label: translate('enableNotifications'),
+                  disabled: busy !== null,
+                  onChange: value => void toggleNotifications(value),
+                }),
+              ),
+            ),
+            h(
+              'div',
+              { style: styles.settingRow },
+              h(
+                'div',
+                { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' } },
+                h('div', { style: { fontSize: '13px' } }, translate('webhookUrl')),
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                  h('input', {
+                    type: 'text',
+                    value: webhookDraft,
+                    placeholder: translate('webhookUrlPlaceholder'),
+                    'aria-label': translate('webhookUrl'),
+                    spellCheck: false,
+                    autoComplete: 'off',
+                    onChange: event => setWebhookDraft(event.target.value),
+                    onKeyDown: event => {
+                      if (event.key !== 'Enter') return
+                      event.preventDefault()
+                      void saveWebhook()
+                    },
+                    style: {
+                      ...styles.input,
+                      borderColor: webhookInvalid ? COLORS.danger : COLORS.border,
+                    },
+                  }),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      'aria-label': translate('saveWebhook'),
+                      style: {
+                        ...styles.primaryButton,
+                        opacity: busy !== null || webhookInvalid ? 0.55 : 1,
+                        cursor: busy !== null || webhookInvalid ? 'default' : 'pointer',
+                      },
+                      disabled: busy !== null || webhookInvalid,
+                      onClick: () => void saveWebhook(),
+                    },
+                    busy === 'config' ? translate('saving') : translate('saveWebhook'),
+                  ),
+                ),
+                h('p', { style: { ...styles.empty, margin: 0 } }, translate('webhookUrlHint')),
+                webhookInvalid ? h('p', { style: { ...styles.error, margin: 0 } }, translate('webhookUrlInvalid')) : null,
+                webhookNotice === null
+                  ? null
+                  : h(
+                      'p',
+                      {
+                        role: 'status',
+                        style: {
+                          margin: 0,
+                          fontSize: '12px',
+                          lineHeight: 1.6,
+                          color: webhookNotice.kind === 'error' ? COLORS.danger : COLORS.success,
+                        },
+                      },
+                      webhookNotice.text,
+                    ),
+                webhookNotice === null && webhookChanged && !webhookInvalid
+                  ? h('p', { style: { ...styles.empty, margin: 0 } }, translate('unsavedHint'))
+                  : null,
+              ),
+            ),
+          ),
+        ),
+
         // Gallery removed - users add pets manually to ~/.dsh/pets
 
         h(
@@ -1161,26 +1474,66 @@ window.__ModuleLoader__.load({
     }
 
     return {
+      name: 'dsh-petpal',
       inject: ['slots'],
       apply(ctx) {
         // A settings-page plugin must never abort the whole client boot: log and
         // degrade instead of letting one bad registration blank the UI.
-        try {
-          const locale = ctx.get('locale') ?? ctx.locale
-          if (locale !== undefined && locale !== null && typeof locale.register === 'function') {
-            localeService = locale
-            try {
-              ctx.effect(() => locale.register(NS, { zh, en }), 'petdex: dictionaries')
-            } catch (error) {
-              console.warn('[petdex] locale registration failed', error)
-              reportClientError('locale', error)
-            }
-            if (typeof locale.bind === 'function') translate = locale.bind(NS)
-          }
+        reportMilestone('apply', 'client half applying')
 
-          ctx.slots.inject('settings.section', () => {
+        // `ctx.get(name)` and the direct property are both used by shipped
+        // plugins; read the service the same defensive way so a different
+        // context shape cannot silently drop the section.
+        const lookup = name => {
+          try {
+            return typeof ctx.get === 'function' ? ctx.get(name) : undefined
+          } catch {
+            return undefined
+          }
+        }
+        const fromGet = lookup('slots')
+        const slots = fromGet !== undefined && fromGet !== null && typeof fromGet.inject === 'function' ? fromGet : ctx.slots
+        if (slots === undefined || slots === null || typeof slots.inject !== 'function') {
+          reportClientError('slots-missing', 'slots service is unavailable')
+          return
+        }
+
+        // Locale is optional. It is set up in its own guard so a missing or
+        // changed locale service can never skip the section registration below —
+        // that ordering bug is what silently removed the pets page before.
+        const adoptLocale = locale => {
+          if (locale === undefined || locale === null || typeof locale.register !== 'function') return false
+          if (localeService === locale) return true
+          localeService = locale
+          try {
+            ctx.effect(() => locale.register(NS, { zh, en }), 'petdex: dictionaries')
+          } catch (error) {
+            console.warn('[petdex] locale registration failed', error)
+            reportClientError('locale', error)
+          }
+          if (typeof locale.bind === 'function') translate = locale.bind(NS)
+          return true
+        }
+
+        try {
+          const bound = adoptLocale(lookup('locale') ?? ctx.locale)
+          // `package.json` orders this module after the locale module, but a page
+          // can materialize plugins in another order (live enable, HMR). Wait for
+          // the service too, so the page never stays on the English fallback.
+          if (!bound) {
+            ctx.inject(['locale'], injected => {
+              adoptLocale(injected.locale ?? lookup('locale'))
+            })
+          }
+        } catch (error) {
+          console.warn('[petdex] locale unavailable', error)
+          reportClientError('locale-lookup', error)
+        }
+
+        try {
+          slots.inject('settings.section', () => {
             try {
-              return ctx.slots.register(
+              const dispose = slots.register(
                 {
                   name: 'settings.section',
                   id: 'petpal',
@@ -1190,6 +1543,8 @@ window.__ModuleLoader__.load({
                 },
                 PetdexSection,
               )
+              reportMilestone('section-ready', 'settings section registered')
+              return dispose
             } catch (error) {
               console.warn('[petdex] settings section registration failed', error)
               reportClientError('section', error)
@@ -1197,8 +1552,8 @@ window.__ModuleLoader__.load({
             }
           })
         } catch (error) {
-          console.warn('[petdex] client activation failed', error)
-          reportClientError('activation', error)
+          console.warn('[petdex] slots.inject failed', error)
+          reportClientError('slots-inject', error)
         }
       },
     }

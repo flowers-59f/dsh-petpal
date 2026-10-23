@@ -39,7 +39,7 @@ dsh plugin --profile <profile> add github:flowers-59f/dsh-petpal
 桌面端只读写 DSH 宠物目录下的文件，不联网、不开端口：
 
 ```
-~/.dsh/pets/.petdex/ui.json        active / scale / bubbles / 字号 / 宽度 / 停留 / 穿透
+~/.dsh/pets/.petdex/ui.json        active / scale / bubbles / 字号 / 宽度 / 停留 / 穿透 / webhookUrl
 ~/.dsh/pets/.petdex/activity.json  各会话的最近活动 { seq, sessions: [{ id, title, status, label, detail, tokens, hold, rev }] }
 ~/.dsh/pets/.petdex/app.pid        进程号，插件据此避免重复启动
 ~/.dsh/pets/.petdex/boot-error.log 插件激活失败时的堆栈（正常为空）
@@ -62,6 +62,14 @@ Windows 端还会把窗口位置写进 `ui.json` 的 `winX` / `winY`（WPF 逻�
   - 气泡背景色（默认黑色）、整体不透明度 0–100%（默认 100%，无阴影）、气泡文字颜色（默认白色）
   - 点击穿透（开启后鼠标可穿过宠物，但也不能拖动）
   - 顶部有实时预览：当前宠物 + 当前字号/宽度的示例气泡
+- **通知**：
+  - 「启用通知」开关：一键开 / 关企业微信通知，默认关闭；关闭时保留已填的 Webhook 地址
+  - 企业微信 Webhook：粘贴企业微信机器人的地址（必须 `https://`）后点「保存」或按回车，成功后显示「✓ 已保存」；未保存 / 格式不对都有对应提示
+  - 通知场景：Agent 需要你确认、一轮工作完成、出错等待操作
+  - 详细文档见 [docs/wechat-notification.md](docs/wechat-notification.md)
+- **加载失败自愈**：页面打开时如果 Host 还没就绪（例如刚重启 Harness），会自动退避重试；仍然失败时显示错误和「重试」按钮，切回这个标签页也会自动刷新，不需要去插件市场里重开插件。
+- **前端按 DSH 标准方式加载**：`package.json` 里声明 `dsh.client: { platform: "web" }`，Host 把 `/petdex/client.js` 也单独提供一份便于排查；不再自行往 `index.html` 注入脚本，避免和 DSH 的启动图重复注册同一模块。
+- 插件被重复挂载（插件市场的热加载条目与 profile 的 bundle 同时生效）时，Host 会复用已经在服务的 `/petdex` 路由，不会因 `duplicate prefix route` 让整个页面失效；客户端模块也做了重复加载保护，只会注册一次。
 
 ## 下载宠物
 

@@ -14,7 +14,7 @@
  *   app.pid        the companion's process id
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -26,7 +26,14 @@ const ASSET_HOST = 'assets.petdex.dev'
 const MAX_SPRITE_BYTES = 24 * 1024 * 1024
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,80}$/
 const MAX_BODY_BYTES = 64 * 1024
+const MAX_CLIENT_LOG_BYTES = 256 * 1024
 const PACKAGE_DIR = dirname(fileURLToPath(import.meta.url))
+// The Client half is normally injected by the web boot graph. That graph can be
+// computed before this bundle's row activates (the window then loads a page
+// without the settings section), so the Host also appends the module itself.
+const CLIENT_BUILD = Date.now().toString(36)
+const CLIENT_SCRIPT = join(PACKAGE_DIR, 'client.js')
+
 const DESKTOP_APPS = {
   darwin: join(PACKAGE_DIR, 'desktop', 'PetdexPet.app', 'Contents', 'MacOS', 'PetdexPet'),
   win32: join(PACKAGE_DIR, 'desktop', 'windows', 'PetPal.exe'),
@@ -45,6 +52,8 @@ const DEFAULT_UI = {
   bubbleOpacity: 100,
   bubbleTextColor: '#ffffff',
   clickThrough: false,
+  enableNotifications: false,
+  webhookUrl: '',
 }
 
 function dshHome() {
@@ -131,6 +140,8 @@ function sanitizeUI(raw) {
     bubbleOpacity: clampInteger(source.bubbleOpacity, DEFAULT_UI.bubbleOpacity, 0, 100),
     bubbleTextColor: /^#[0-9a-f]{6}$/i.test(source.bubbleTextColor) ? source.bubbleTextColor.toLowerCase() : DEFAULT_UI.bubbleTextColor,
     clickThrough: source.clickThrough === true,
+    enableNotifications: source.enableNotifications === true,
+    webhookUrl: typeof source.webhookUrl === 'string' ? source.webhookUrl.trim() : '',
   }
 }
 
@@ -481,6 +492,89 @@ async function removePet(slug) {
 }
 
 // ---------------------------------------------------------------------------
+// 企业微信机器人通知 / WeChat Work Bot Notification
+
+/**
+ * 发送企业微信机器人消息
+ * Send message via WeChat Work bot webhook
+ */
+async function sendWeChatNotification(webhookUrl, message) {
+  if (!webhookUrl || typeof webhookUrl !== 'string' || !webhookUrl.startsWith('https://')) {
+    return
+  }
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        msgtype: 'text',
+        text: {
+          content: message,
+        },
+      }),
+      signal: timeoutSignal(5000),
+    })
+
+    if (!response.ok) {
+      console.warn('[petdex] WeChat notification failed:', response.status)
+    }
+  } catch (error) {
+    console.warn('[petdex] WeChat notification error:', error?.message ?? error)
+  }
+}
+
+/**
+ * 格式化会话状态通知消息
+ * Format session status notification message
+ */
+function formatNotificationMessage(session, event, data) {
+  const title = sessionTitle(session)
+  const timestamp = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+
+  if (event === 'approval/asked') {
+    const question = typeof data.title === 'string' ? data.title : '需要您的确认'
+    return `🔔 DeepSeek Harness 通知
+
+会话：${title}
+状态：等待操作
+问题：${question}
+
+时间：${timestamp}`
+  }
+
+  if (event === 'turn/end') {
+    const reason = data.reason?.kind
+    let statusText = '已完成'
+    let emoji = '✅'
+
+    if (reason === 'blocked' || reason === 'max-tokens') {
+      statusText = '等待操作'
+      emoji = '⏸️'
+    } else if (reason !== 'completed') {
+      statusText = '出错了'
+      emoji = '❌'
+      if (data.reason?.error?.message) {
+        statusText += `：${truncate(data.reason.error.message, 60)}`
+      }
+    }
+
+    const tokensText = session.activity.tokens > 0 ? `\n输出token：${session.activity.tokens}` : ''
+
+    return `${emoji} DeepSeek Harness 通知
+
+会话：${title}
+状态：${statusText}${tokensText}
+
+时间：${timestamp}`
+  }
+
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // Session activity → sprite state + bubble
 
 const SESSION_IDLE_MS = 10 * 60 * 1000
@@ -681,6 +775,32 @@ function scheduleActivityWrite() {
     writeTimer = null
     void flushActivity().catch(() => {})
   }, WRITE_INTERVAL_MS)
+}
+
+/**
+ * 从消息数据中提取文本内容
+ * Extract text content from message data
+ */
+function textFromMessage(message) {
+  if (!message || typeof message !== 'object') return ''
+  
+  // 处理字符串消息
+  if (typeof message === 'string') return message.trim()
+  
+  // 处理对象消息
+  if (typeof message.text === 'string') return message.text.trim()
+  if (typeof message.content === 'string') return message.content.trim()
+  
+  // 处理数组内容
+  if (Array.isArray(message.content)) {
+    for (const item of message.content) {
+      if (item && typeof item === 'object' && item.type === 'text' && typeof item.text === 'string') {
+        return item.text.trim()
+      }
+    }
+  }
+  
+  return ''
 }
 
 async function flushActivity() {
@@ -956,6 +1076,18 @@ function handleSessionEvent(session, event) {
       detail: typeof data.title === 'string' ? data.title : null,
       hold: true,
     })
+    // 发送企业微信通知
+    void (async () => {
+      try {
+        const ui = await readUI()
+        if (ui.enableNotifications && ui.webhookUrl) {
+          const message = formatNotificationMessage(state, 'approval/asked', data)
+          if (message) await sendWeChatNotification(ui.webhookUrl, message)
+        }
+      } catch (error) {
+        console.warn('[petdex] Failed to send WeChat notification:', error)
+      }
+    })()
     return
   }
 
@@ -1010,6 +1142,18 @@ function handleSessionEvent(session, event) {
         hold: false,
       })
     }
+    // 发送企业微信通知
+    void (async () => {
+      try {
+        const ui = await readUI()
+        if (ui.enableNotifications && ui.webhookUrl) {
+          const message = formatNotificationMessage(state, 'turn/end', data)
+          if (message) await sendWeChatNotification(ui.webhookUrl, message)
+        }
+      } catch (error) {
+        console.warn('[petdex] Failed to send WeChat notification:', error)
+      }
+    })()
     return
   }
 
@@ -1145,6 +1289,22 @@ function sameOrigin(request) {
   }
 }
 
+async function sendClient(response) {
+  let bytes
+  try {
+    bytes = await readFile(CLIENT_SCRIPT)
+  } catch {
+    sendJson(response, 404, { error: 'not found' })
+    return
+  }
+  response.writeHead(200, {
+    'cache-control': 'no-store',
+    'content-type': 'text/javascript; charset=utf-8',
+    'content-length': String(bytes.length),
+  })
+  response.end(bytes)
+}
+
 async function sendSprite(path, response) {
   const match = /^\/petdex\/asset\/([a-z0-9][a-z0-9-]{0,80})\/(spritesheet\.(?:webp|png))$/.exec(path)
   if (match === null) {
@@ -1184,6 +1344,10 @@ async function handle(request, response) {
       await thumbPetdex(url, response)
       return
     }
+    if (request.method === 'GET' && path === `${PREFIX}/client.js`) {
+      await sendClient(response)
+      return
+    }
     if (request.method === 'GET' && path.startsWith(`${PREFIX}/asset/`)) {
       await sendSprite(path, response)
       return
@@ -1197,7 +1361,15 @@ async function handle(request, response) {
       const stack = typeof body.stack === 'string' ? body.stack : ''
       try {
         mkdirSync(configDir(), { recursive: true })
-        appendFileSync(clientErrorPath(), `[${new Date().toISOString()}] ${phase}: ${message}\n${stack}\n`, 'utf8')
+        const file = clientErrorPath()
+        // The Client half reports one milestone per page load; keep the file from
+        // growing without bound across restarts.
+        try {
+          if (statSync(file).size > MAX_CLIENT_LOG_BYTES) rmSync(file, { force: true })
+        } catch {
+          // no log yet
+        }
+        appendFileSync(file, `[${new Date().toISOString()}] ${phase}: ${message}\n${stack}\n`, 'utf8')
       } catch {
         // best-effort diagnostics
       }
@@ -1307,10 +1479,22 @@ function applyPlugin(ctx) {
   try {
     ctx.inject(['webServer'], injected => {
       try {
-        injected.effect(
-          () => injected.webServer.register({ kind: 'prefix', path: PREFIX, handler: handle }),
-          'petdex: http routes',
-        )
+        injected.effect(() => {
+          try {
+            return injected.webServer.register({ kind: 'prefix', path: PREFIX, handler: handle })
+          } catch (error) {
+            // The market can mount a hot entry next to the composed bundle, so a
+            // second fiber of this same module may try to own /petdex as well.
+            // Both load this file, so the routes already registered serve the
+            // same handlers; failing the fiber here would take the pets page
+            // down until the plugin is toggled by hand.
+            if (/duplicate[^"]*route|already (registered|exists)/i.test(String(error?.message ?? error))) {
+              console.warn('[petdex] /petdex is already served by another instance of this plugin')
+              return () => {}
+            }
+            throw error
+          }
+        }, 'petdex: http routes')
       } catch (error) {
         logBootError(error)
       }

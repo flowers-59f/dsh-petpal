@@ -7,6 +7,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
@@ -15,6 +16,7 @@
     "index.js",
     "client.js",
     "cordis.patch.yml",
+    "package.json",
     "locale/*.json",
     "icon.svg",
     "README.md",
@@ -34,16 +36,17 @@
     "screenshots.json",
     "docs/bubble.png"
   ],
+  "scripts": {
+    "test": "node test/render.test.mjs && node test/boot.test.mjs && node test/notification.test.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
       "platform": "web",
-      "immediately": true,
       "inject": [
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-settings"
+        "@deepseek-ai/dsh-client-locale"
       ]
     }
   },
