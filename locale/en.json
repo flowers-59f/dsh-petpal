@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "PetPal Pets",
-    "description": "Manage the local pet library and show one on your desktop. Pets live in ~/.dsh/pets; download more from petdex.dev."
+    "description": "Manage the local pet library and show one on your macOS or Windows desktop. Pets live in ~/.dsh/pets; download more from petdex.dev."
   }
 }

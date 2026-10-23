@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Windows desktop companion for dsh-petpal.
+
+    Targets .NET Framework 4.8, which ships with Windows 10 (1903+) and
+    Windows 11, so the plugin needs no extra runtime download. The UI is
+    authored in C# (no XAML) so the project also compiles from macOS/Linux
+    through the .NET SDK, exactly like the checked-in PetPal.exe.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>PetPal</AssemblyName>
+    <RootNamespace>PetPal</RootNamespace>
+    <Platforms>AnyCPU</Platforms>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Deterministic>true</Deterministic>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Company>flowers-59f</Company>
+    <Product>PetPal</Product>
+    <AssemblyTitle>PetPal desktop companion</AssemblyTitle>
+    <Description>Desktop pet companion for the dsh-petpal DeepSeek Harness plugin.</Description>
+    <Version>1.1.0</Version>
+    <FileVersion>1.1.0.0</FileVersion>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- WPF is part of the .NET Framework; reference it explicitly so the
+         WindowsDesktop SDK (unavailable off Windows) is not required. -->
+    <Reference Include="PresentationFramework" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+</Project>

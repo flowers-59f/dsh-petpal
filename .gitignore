@@ -1,5 +1,8 @@
 .build-cache/
 desktop/.build-cache/
+desktop/windows/.build/
+desktop/windows/bin/
+desktop/windows/obj/
 .DS_Store
 *.log
 node_modules/

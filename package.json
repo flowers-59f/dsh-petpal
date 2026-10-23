@@ -1,9 +1,9 @@
 {
   "name": "dsh-petpal",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "PetPal: show petdex.dev pets as a desktop companion in DeepSeek Harness.",
+  "description": "PetPal: show petdex.dev pets as a desktop companion in DeepSeek Harness on macOS and Windows.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -22,6 +22,15 @@
     "desktop/web/index.html",
     "desktop/build.sh",
     "desktop/PetdexPet.app",
+    "desktop/windows/*.cs",
+    "desktop/windows/*.csproj",
+    "desktop/windows/app.manifest",
+    "desktop/windows/build.sh",
+    "desktop/windows/PetPal.exe",
+    "desktop/windows/PetPal.exe.config",
+    "desktop/windows/tools/dwebp.exe",
+    "desktop/windows/LICENSE.webp",
+    "desktop/windows/THIRD-PARTY-NOTICES.md",
     "screenshots.json",
     "docs/bubble.png"
   ],
@@ -53,7 +62,8 @@
     "dsh-plugin",
     "desktop-pet",
     "petdex",
-    "macos"
+    "macos",
+    "windows"
   ],
   "engines": {
     "dsh": ">=0.2.1-rc.2"

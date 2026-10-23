@@ -3,8 +3,9 @@
  *
  * Owns a pet library under `$DSH_HOME/pets`, downloads pets from petdex.dev in
  * the same format Codex and Petdex use (pet.json + an 8-column sprite atlas),
- * and runs the bundled desktop companion (desktop/PetdexPet.app) so the pet
- * keeps living after the Harness window closes.
+ * and runs the bundled desktop companion (desktop/PetdexPet.app on macOS,
+ * desktop/windows/PetPal.exe on Windows) so the pet keeps living after the
+ * Harness window closes.
  *
  * Everything the companion needs is a file under `<pets>/.petdex`:
  *   ui.json        active pet + appearance settings (also written by the app
@@ -26,7 +27,10 @@ const MAX_SPRITE_BYTES = 24 * 1024 * 1024
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,80}$/
 const MAX_BODY_BYTES = 64 * 1024
 const PACKAGE_DIR = dirname(fileURLToPath(import.meta.url))
-const APP_PATH = join(PACKAGE_DIR, 'desktop', 'PetdexPet.app', 'Contents', 'MacOS', 'PetdexPet')
+const DESKTOP_APPS = {
+  darwin: join(PACKAGE_DIR, 'desktop', 'PetdexPet.app', 'Contents', 'MacOS', 'PetdexPet'),
+  win32: join(PACKAGE_DIR, 'desktop', 'windows', 'PetPal.exe'),
+}
 
 const DEFAULT_UI = {
   active: null,
@@ -97,7 +101,7 @@ async function fetchUpstream(url) {
   try {
     response = await fetch(url, {
       redirect: 'follow',
-      headers: { referer: `${SITE}/`, 'user-agent': 'dsh-petpal/1.0 (+https://petdex.dev)' },
+      headers: { referer: `${SITE}/`, 'user-agent': 'dsh-petpal/1.1 (+https://petdex.dev)' },
       signal: timeoutSignal(30000),
     })
   } catch (error) {
@@ -219,25 +223,69 @@ async function appRunning() {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
+  } catch (error) {
+    // Access denied still means the process exists (for example when it was
+    // started by a sibling process with a different token).
+    if (error?.code === 'EPERM') return true
     await rm(pidPath(), { force: true })
     return false
   }
 }
 
+/** The companion binary bundled for this platform, or null when unsupported. */
+function desktopAppPath() {
+  return DESKTOP_APPS[process.platform] ?? null
+}
+
 function appAvailable() {
-  return process.platform === 'darwin' && existsSync(APP_PATH)
+  const path = desktopAppPath()
+  return path !== null && existsSync(path)
 }
 
 async function startApp() {
-  if (!appAvailable()) throw new HttpError(500, '桌面宠物组件不可用 / Desktop companion is not available on this platform')
+  const path = desktopAppPath()
+  if (path === null || !existsSync(path)) {
+    throw new HttpError(
+      500,
+      '桌面宠物组件不可用：安装包里缺少当前系统的桌面组件。 / Desktop companion is not available: the install is missing the binary for this platform.',
+    )
+  }
   if (await appRunning()) return false
   await mkdir(configDir(), { recursive: true })
-  const child = spawn(APP_PATH, [], {
+
+  const child = spawn(path, [], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true,
     env: { ...process.env, PETDEX_HOME: petsDir(), PETDEX_PARENT_PID: String(process.pid) },
   })
+
+  // Windows WinExe apps report a missing/broken install asynchronously; wait
+  // for Node's spawn result so the settings page can show the real error
+  // instead of an optimistic "running" state.
+  let spawnError = null
+  child.on('error', error => {
+    spawnError = error
+  })
+  const spawned = await new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), 5000)
+    child.once('spawn', () => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+    child.once('error', () => {
+      clearTimeout(timer)
+      resolve(false)
+    })
+  })
+  if (!spawned) {
+    child.unref()
+    throw new HttpError(
+      500,
+      `无法启动桌面宠物 / Failed to start the desktop companion: ${spawnError?.message ?? 'unknown error'}`,
+    )
+  }
+
   child.unref()
   return true
 }
@@ -247,8 +295,21 @@ async function stopApp() {
   if (pid === null) return false
   try {
     process.kill(pid, 'SIGTERM')
-  } catch {
-    // already gone
+  } catch (error) {
+    // On Windows a process started outside our token may refuse SIGTERM;
+    // taskkill is the portable fallback there.
+    if (process.platform === 'win32' && error?.code === 'EPERM') {
+      try {
+        const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        })
+        killer.on('error', () => {})
+        killer.unref()
+      } catch {
+        // already gone
+      }
+    }
   }
   await rm(pidPath(), { force: true })
   return true
@@ -1181,11 +1242,18 @@ async function handle(request, response) {
       }
       if (path === `${PREFIX}/api/desktop`) {
         if (body.enabled === false) {
-          await stopApp()
+          // Let the companion see the flag before terminating it, so a clean
+          // exit can remove its own pid file and stop timers.
           await writeUI({ enabled: false })
+          await stopApp()
         } else {
           await writeUI({ enabled: true })
-          await startApp()
+          try {
+            await startApp()
+          } catch (error) {
+            await writeUI({ enabled: false })
+            throw error
+          }
         }
         sendJson(response, 200, await snapshot())
         return
@@ -1330,7 +1398,14 @@ function applyPlugin(ctx) {
       await flushActivity()
 
       const current = await readUI()
-      if (current.enabled && !(await appRunning())) await startApp()
+      if (current.enabled && !(await appRunning())) {
+        try {
+          await startApp()
+        } catch (error) {
+          await writeUI({ enabled: false }).catch(() => {})
+          throw error
+        }
+      }
     } catch (error) {
       logBootError(error)
     }

@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
       clickThrough: '点击穿透',
       clickThroughHint: '开启后鼠标可以穿过宠物，但也不能再拖动它。',
       showOnDesktop: '在桌面显示',
-      missingApp: '桌面宠物组件不可用：当前系统不是 macOS，或者安装包里缺少 desktop/PetdexPet.app。',
+      missingApp: '桌面宠物组件不可用：当前系统没有对应的桌面组件，或安装包里缺少 desktop/ 下的程序。',
       failed: '出错了：{message}',
       confirmRemove: '删除「{name}」？桌面上正在显示的话会切到别的宠物。',
       downloadTitle: '下载宠物',
@@ -120,7 +120,7 @@ window.__ModuleLoader__.load({
       clickThrough: 'Click-through',
       clickThroughHint: 'The mouse passes through the pet — which also means it can no longer be dragged.',
       showOnDesktop: 'Show on the desktop',
-      missingApp: 'The desktop companion is unavailable: this is not macOS, or the install is missing desktop/PetdexPet.app.',
+      missingApp: 'The desktop companion is unavailable: there is no companion for this platform, or the install is missing the program under desktop/.',
       failed: 'Something went wrong: {message}',
       confirmRemove: 'Remove "{name}"? If it is on the desktop, another pet takes over.',
       downloadTitle: 'Download a pet',
@@ -281,6 +281,12 @@ window.__ModuleLoader__.load({
 
     function detectRows(width, height) {
       if (!(width > 0) || !(height > 0)) return 9
+      // Petdex cells are 192x208; the ratio heuristic assumes square cells and
+      // misreads the 11-row (1536x2288) export, so estimate from the frame
+      // aspect first and only fall back to the old ratio check.
+      const estimate = height / ((width / ATLAS.columns) * (ATLAS.frameHeight / ATLAS.frameWidth))
+      if (Math.abs(estimate - 9) < 0.35) return 9
+      if (Math.abs(estimate - 11) < 0.35) return 11
       const ratio = height / width
       const candidates = [
         { rows: 9, ratio: 9 / 8 },

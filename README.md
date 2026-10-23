@@ -1,20 +1,23 @@
 # PetPal · DSH 插件
 
-把 [petdex.dev](https://petdex.dev) 的宠物放进 DSH 自己的宠物目录，并由**自带的桌面小应用**把宠物画在桌面上 —— 关掉 Harness 窗口后宠物仍然在。
+把 [petdex.dev](https://petdex.dev) 的宠物放进 DSH 自己的宠物目录，并由**自带的桌面小应用**把宠物画在桌面上 —— 关掉 Harness 窗口后宠物仍然在。macOS 和 Windows 都可以用。
 
-宠物格式和 Petdex / Codex 完全一致，下载的就是同一套雪碧图，不需要转换：
+宠物格式和 Petdex / Codex 完全一致，下载的就是同一套雪碧图，不需要手动转换：
 
 ```
 ~/.dsh/pets/<slug>/
   pet.json          # id / displayName / description / spritesheetPath
-  spritesheet.webp  # 8 列雪碧图，每帧 192×208，9 行状态
+  spritesheet.webp  # 8 列雪碧图，每帧 192×208，9 行状态（兼容 11 行）
 ```
 
 只有安装位置换成了 DSH 的 `~/.dsh/pets`，与 Codex 的 `~/.codex/pets` 互不影响。
 
 ## 安装
 
-需要 macOS 12+ 和 DSH 0.2.1+。
+需要 DSH 0.2.1+，以及：
+
+- **macOS 12+**（桌面端是 Swift + WKWebView，系统自带运行环境）。
+- **Windows 10 1903+ / Windows 11**（x64，或运行 x64 模拟的 ARM64）。桌面端是 .NET Framework 4.8 的 WPF 程序，Windows 10/11 已自带；极少数精简系统如果缺少 4.8，安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48) 即可。
 
 ```bash
 dsh plugin --profile <profile> add github:flowers-59f/dsh-petpal
@@ -22,22 +25,31 @@ dsh plugin --profile <profile> add github:flowers-59f/dsh-petpal
 
 安装后重启 DSH，打开 **设置 → 宠物**。插件市场收录后也可以从 **插件 → 发现** 安装。
 
+> 安装包里已经带了编译好的桌面端，普通用户不需要安装 Xcode、Swift、.NET SDK 或 Python。
+
 ## 组成
 
 | 部分 | 作用 |
 | --- | --- |
 | Host `index.js` | 宠物库（列目录、删除、切换）、雪碧图静态服务、`ui.json` 配置、把 Harness 的会话事件投影成宠物状态与气泡。 |
 | Client `client.js` | 只注册一个「设置 → 宠物」页面：已安装列表、外观设置和实时预览。 |
-| Desktop `desktop/` | 原生 macOS 桌面宠物（Swift + WKWebView，约 300 行）。无边框透明置顶窗口，可拖动、可点击穿透，支持 9 种动画状态与气泡。 |
+| Desktop `desktop/`（macOS） | 原生 macOS 桌面宠物（Swift + WKWebView，约 300 行）。无边框透明置顶窗口，可拖动、可点击穿透，支持 9 种动画状态与气泡。 |
+| Desktop `desktop/windows/`（Windows） | 原生 Windows 桌面宠物（C# + WPF，`PetPal.exe`）。透明的分层窗口，不占任务栏、不抢焦点、支持拖动/点击穿透/9 种动画状态与气泡。 |
 
-桌面端只读文件，不联网、不开端口：
+桌面端只读写 DSH 宠物目录下的文件，不联网、不开端口：
 
 ```
 ~/.dsh/pets/.petdex/ui.json        active / scale / bubbles / 字号 / 宽度 / 停留 / 穿透
 ~/.dsh/pets/.petdex/activity.json  各会话的最近活动 { seq, sessions: [{ id, title, status, label, detail, tokens, hold, rev }] }
 ~/.dsh/pets/.petdex/app.pid        进程号，插件据此避免重复启动
 ~/.dsh/pets/.petdex/boot-error.log 插件激活失败时的堆栈（正常为空）
+~/.dsh/pets/.petdex/app-error.log  Windows 桌面端自身出错时的堆栈（正常为空）
+~/.dsh/pets/.petdex/cache/         Windows 端把 WebP 雪碧图转换后的 PNG 缓存
 ```
+
+Windows 上 `~/.dsh/pets` 就是 `%USERPROFILE%\.dsh\pets`（例如 `C:\Users\<你>\.dsh\pets`）。
+
+Windows 端还会把窗口位置写进 `ui.json` 的 `winX` / `winY`（WPF 逻辑像素），与 macOS 的 `x` / `y` 分开保存，两个平台不会互相覆盖位置。
 
 ## 设置页能力
 
@@ -68,7 +80,8 @@ dsh plugin --profile <profile> add github:flowers-59f/dsh-petpal
 
 ## 桌面宠物的行为
 
-- 始终置顶、不抢焦点、不占 Dock（`LSUIElement`），出现在所有桌面空间。
+- **macOS**：始终置顶、不抢焦点、不占 Dock（`LSUIElement`），出现在所有桌面空间。
+- **Windows**：始终置顶、不抢焦点、不出现在任务栏和 Alt+Tab（`WS_EX_TOOLWINDOW` / `WS_EX_NOACTIVATE`），窗口是逐像素透明的分层窗口；支持多显示器和高 DPI（PerMonitorV2）。
 - 随 Harness 退出：宠物记着启动它的 Harness 进程 PID，Harness 正常退出或崩溃后 2 秒内自动结束，不会留下孤儿进程。
 - 拖动改位置，位置写回 `ui.json`；点一下会挥手。
 - 跟着 Harness 活动变状态：开始任务 → 跳，工具调用 → 跑，等待确认 → 等待，完成 → 挥手，失败 → 失败。
@@ -77,22 +90,48 @@ dsh plugin --profile <profile> add github:flowers-59f/dsh-petpal
 - 气泡默认是黑底白字、没有阴影；可在「外观」里设置背景色、文字颜色和整体不透明度（作用于整个气泡，包括文字和图标；0% 为完全透明）。设置页的预览底板固定为白色，不透明度只影响气泡本身。
 - 每个会话一个气泡。多个会话时默认只显示最新一个（带 `+N`），点击展开全部，再点「收起」折叠。
 - 流式输出只更新气泡文字，不重启宠物动画和气泡里的转圈动画。
-- 拖动由定时器驱动，回复流式输出时也能正常拖动；拖动时按水平方向播放 `running-left` / `running-right`。
-- 拖动宠物时按水平方向播放 `running-left` / `running-right`，松手回到当前活动对应的动作；点一下会挥手。
-- 点击气泡会激活 DeepSeek Harness 窗口（DSH 目前没有会话级深链，因此无法直接定位到具体会话）。
+- 拖动由定时器驱动，回复流式输出时也能正常拖动；拖动时按水平方向播放 `running-left` / `running-right`，松手回到当前活动对应的动作；点一下会挥手。
+- 点击气泡会激活 DeepSeek Harness（优先通过 `dsh://open`；Windows 上如果协议未注册，会尝试把 Harness 窗口切到前台）。DSH 目前没有会话级深链，因此无法直接定位到具体会话。
 - 兼容 9 行（1536×1872）与 11 行（ChatGPT 导出，1536×2288）两种网格，自动按宽度缩放。
+
+### Windows 端补充说明
+
+- **WebP**：Windows 的 WPF 默认不认 WebP，所以第一次显示某只宠物时，`PetPal.exe` 会用附带的官方 `dwebp.exe` 把雪碧图转成 PNG 缓存到 `~/.dsh/pets/.petdex/cache`。转换只发生一次（源文件变化后会重新转换），之后启动是直接读 PNG。PNG 格式的宠物不需要转换。
+- **虚拟桌面**：Windows 没有让普通窗口固定到所有虚拟桌面的公开接口，宠物会留在启动它的那个虚拟桌面；切换虚拟桌面后需要切回原桌面才能看到它。
+- **独占全屏游戏/视频**：置顶窗口可能被独占全屏盖住，这是 Windows 的窗口层级限制。
+- **多显示器**：窗口位置会限制在虚拟屏幕范围内；拔掉显示器后重新启动会退回到主屏可见区域。
+- **未签名的 exe**：`PetPal.exe` 没有代码签名。如果是通过 Git 安装（推荐），通常不会触发 SmartScreen；如果是从压缩包解压后再运行，Windows 可能提示“未知发布者”，选择“仍要运行”即可，也可以右键属性 → 解除锁定。
+- **退出**：关掉设置页里的「在桌面显示」，或在任务管理器结束 `PetPal.exe`，宠物都会立刻消失。
 
 ## 构建桌面端
 
-安装包里已经带了编译好的 `desktop/PetdexPet.app`。改过 `desktop/main.swift` 或 `desktop/web/index.html` 后重新构建：
+安装包里已经带了编译好的桌面端。改过源码后重新构建：
+
+### macOS
 
 ```bash
 bash desktop/build.sh     # 需要 macOS 命令行工具（swiftc），无第三方依赖
 ```
 
+### Windows
+
+```bash
+bash desktop/windows/build.sh   # 需要 .NET SDK 6+；可在 Windows、macOS、Linux 上交叉构建
+```
+
+产物：
+
+```
+desktop/windows/PetPal.exe          # 目标 .NET Framework 4.8（Win10 1903+ / Win11 自带）
+desktop/windows/PetPal.exe.config   # 声明 supportedRuntime v4.8
+desktop/windows/tools/dwebp.exe     # 官方 libwebp 1.6.0，用于 WebP → PNG
+```
+
+`PetPal.csproj` 只引用 .NET Framework 自带的 WPF / System.Web 程序集，不使用 WindowsDesktop SDK，所以也能在 macOS 上直接编译检查。`dwebp.exe` 的版本、SHA-256 和 BSD 许可证见 `desktop/windows/THIRD-PARTY-NOTICES.md` 与 `desktop/windows/LICENSE.webp`。
+
 > 改了 Host `index.js` / Client `client.js` 后需要重启一次 Harness：DSH 的 HMR 只热重载 profile 配置（`hmr.root` 默认为空），不会热重载插件模块。也可以先用 `plugin_manager` 禁用再启用 `dsh-petpal` bundle 来重载。桌面宠物本身可以随时单独重启。
 >
-> 插件激活出错时不会让整个 Harness 启动失败：异常会写入 `~/.dsh/pets/.petdex/boot-error.log`，其余功能继续可用。
+> 插件激活出错时不会让整个 Harness 启动失败：异常会写入 `~/.dsh/pets/.petdex/boot-error.log`，其余功能继续可用。Windows 桌面端自身的问题写入 `.petdex/app-error.log`；设置 `PETDEX_DEBUG=1` 后还会写 `.petdex/app.log`。
 
 ## 效果
 
@@ -100,8 +139,13 @@ bash desktop/build.sh     # 需要 macOS 命令行工具（swiftc），无第三
 
 ## 卸载
 
-设置 → 插件里停用或移除本插件即可。宠物文件留在 `~/.dsh/pets`；如果桌面宠物还在运行，先在「设置 → 宠物」里关掉「桌面宠物」，或者直接结束 `PetdexPet` 进程。
+设置 → 插件里停用或移除本插件即可。宠物文件留在 `~/.dsh/pets`；如果桌面宠物还在运行，先在「设置 → 宠物」里关掉「桌面宠物」，或者直接结束进程：
+
+- macOS：`PetdexPet`
+- Windows：`PetPal.exe`
 
 ## License
 
 MIT © 2026 flowers-59f
+
+桌面端附带的 `dwebp.exe` 来自 WebM Project 的 libwebp，按 BSD 3-Clause 分发，不属于本项目的 MIT 许可；详见 `desktop/windows/THIRD-PARTY-NOTICES.md`。

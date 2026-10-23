@@ -264,6 +264,12 @@
 
   function detectRows(width, height) {
     if (!(width > 0) || !(height > 0)) return 9;
+    // Petdex cells are 192x208; the ratio heuristic assumes square cells and
+    // misreads the 11-row (1536x2288) export, so estimate from the frame
+    // aspect first and only fall back to the old ratio check.
+    var estimate = height / ((width / ATLAS.columns) * (ATLAS.frameHeight / ATLAS.frameWidth));
+    if (Math.abs(estimate - 9) < 0.35) return 9;
+    if (Math.abs(estimate - 11) < 0.35) return 11;
     var ratio = height / width;
     var candidates = [{ rows: 9, ratio: 9 / 8 }, { rows: 11, ratio: 11 / 8 }];
     var best = candidates[0];
