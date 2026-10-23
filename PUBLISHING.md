@@ -52,8 +52,7 @@ Add dsh-petpal: macOS desktop pets for DSH
 
 ## 4. 许可证
 
-当前 `package.json` 标记为 `UNLICENSED`，仓库还没有 LICENSE。
-如果要按开源许可证发布，先补一个（例如 MIT），再提交市场 PR。
+MIT，见仓库根目录的 `LICENSE`。
 
 ## 5. 备注
 

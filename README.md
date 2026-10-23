@@ -101,3 +101,7 @@ bash desktop/build.sh     # 需要 macOS 命令行工具（swiftc），无第三
 ## 卸载
 
 设置 → 插件里停用或移除本插件即可。宠物文件留在 `~/.dsh/pets`；如果桌面宠物还在运行，先在「设置 → 宠物」里关掉「桌面宠物」，或者直接结束 `PetdexPet` 进程。
+
+## License
+
+MIT © 2026 flowers-59f

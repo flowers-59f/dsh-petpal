@@ -11,6 +11,7 @@
     "./icon": "./icon.svg"
   },
   "files": [
+    "LICENSE",
     "index.js",
     "client.js",
     "cordis.patch.yml",
@@ -38,7 +39,7 @@
     }
   },
   "author": "flowers-59f",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "homepage": "https://github.com/flowers-59f/dsh-petpal#readme",
   "repository": {
     "type": "git",
