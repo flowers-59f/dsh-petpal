@@ -195,14 +195,17 @@ window.__ModuleLoader__.load({
           message: String(error?.message ?? error),
           stack: typeof error?.stack === 'string' ? error.stack : '',
         }
-        if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-          navigator.sendBeacon(api('petdex/api/client-log'), JSON.stringify(payload))
-        } else if (typeof fetch === 'function') {
+        // fetch first: sendBeacon refuses the desktop shell's dsh-app:// origin,
+        // which silently swallowed every client-side report.
+        if (typeof fetch === 'function') {
           void fetch(api('petdex/api/client-log'), {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
+            keepalive: true,
           }).catch(() => {})
+        } else if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+          navigator.sendBeacon(api('petdex/api/client-log'), JSON.stringify(payload))
         }
       } catch {
         // diagnostics must never break the page
@@ -1475,7 +1478,10 @@ window.__ModuleLoader__.load({
 
     return {
       name: 'dsh-petpal',
-      inject: ['slots'],
+      // `locale` is a service dependency, not just a nice-to-have: without it the
+      // fiber activates before the dictionary service exists and every label
+      // falls back to English.
+      inject: ['slots', 'locale'],
       apply(ctx) {
         // A settings-page plugin must never abort the whole client boot: log and
         // degrade instead of letting one bad registration blank the UI.
@@ -1516,15 +1522,7 @@ window.__ModuleLoader__.load({
         }
 
         try {
-          const bound = adoptLocale(lookup('locale') ?? ctx.locale)
-          // `package.json` orders this module after the locale module, but a page
-          // can materialize plugins in another order (live enable, HMR). Wait for
-          // the service too, so the page never stays on the English fallback.
-          if (!bound) {
-            ctx.inject(['locale'], injected => {
-              adoptLocale(injected.locale ?? lookup('locale'))
-            })
-          }
+          adoptLocale(ctx.locale ?? lookup('locale'))
         } catch (error) {
           console.warn('[petdex] locale unavailable', error)
           reportClientError('locale-lookup', error)
