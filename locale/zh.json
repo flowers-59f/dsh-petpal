@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "PetPal 宠物",
+    "description": "管理本机的宠物库，并在桌面上显示一只宠物。宠物文件放在 ~/.dsh/pets，可从 petdex.dev 下载。"
+  }
+}

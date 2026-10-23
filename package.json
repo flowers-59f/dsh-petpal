@@ -1,0 +1,60 @@
+{
+  "name": "dsh-petpal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PetPal: show petdex.dev pets as a desktop companion in DeepSeek Harness.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "desktop/main.swift",
+    "desktop/web/index.html",
+    "desktop/build.sh",
+    "desktop/PetdexPet.app",
+    "screenshots.json",
+    "docs/bubble.png"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "author": "flowers-59f",
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/flowers-59f/dsh-petpal#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flowers-59f/dsh-petpal.git"
+  },
+  "bugs": {
+    "url": "https://github.com/flowers-59f/dsh-petpal/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "desktop-pet",
+    "petdex",
+    "macos"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.2"
+  }
+}

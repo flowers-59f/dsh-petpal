@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Petdex</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    height: 100%;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  #root {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 3px 0;
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+    --bubble-bg: transparent;
+    --bubble-fg: #ffffff;
+    --shimmer-hi: #ffffff;
+    --shimmer-lo: rgba(255, 255, 255, 0.5);
+  }
+  #stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: max-content;
+    font-size: var(--bubble-font, 13px);
+    opacity: var(--bubble-alpha, 1);
+  }
+
+  /* ---------------------------------------------------------------- bubble */
+  .bubble {
+    position: relative;
+    box-sizing: border-box;
+    width: var(--bubble-width, 320px);
+    padding: 4px 8px 5px;
+    border-radius: 12px;
+    background: var(--bubble-bg);
+    color: var(--bubble-fg);
+    cursor: pointer;
+    animation: bubble-in 160ms ease;
+    transform-origin: 50% 100%;
+  }
+  .bubble:active { opacity: 0.85; }
+  @keyframes bubble-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .bubble-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 17px;
+  }
+  .bubble-icon {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .bubble-icon svg { display: block; }
+  .spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-top-color: currentColor;
+    border-right-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #f0b429;
+  }
+  .bubble-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 1em;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    color: var(--bubble-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bubble-count {
+    flex: none;
+    font-size: 0.8em;
+    font-weight: 500;
+    opacity: 0.55;
+  }
+  .bubble-line {
+    margin-top: 1px;
+    padding-left: 21px;
+    font-size: 0.94em;
+    line-height: 1.4;
+    color: var(--bubble-fg);
+    opacity: 0.72;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bubble-line.shimmer {
+    opacity: 1;
+    background: linear-gradient(
+      100deg,
+      var(--shimmer-lo) 20%,
+      var(--shimmer-hi) 48%,
+      var(--shimmer-lo) 76%
+    );
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 1.9s linear infinite;
+  }
+  @keyframes shimmer {
+    from { background-position: 140% 0; }
+    to { background-position: -40% 0; }
+  }
+
+  /* collapse control shown when multiple bubbles are expanded */
+  #collapse {
+    display: none;
+    padding: 2px 8px;
+    font-size: 10.5px;
+    color: var(--bubble-fg);
+    opacity: 0.7;
+    cursor: pointer;
+  }
+  #collapse:hover { opacity: 1; }
+
+  /* ----------------------------------------------------------------- stage */
+  #stage {
+    position: relative;
+    overflow: hidden;
+    flex: none;
+  }
+  #sprite {
+    position: absolute;
+    left: 0;
+    top: 0;
+    max-width: none;
+    -webkit-user-drag: none;
+    user-select: none;
+    pointer-events: none;
+    transform: translateX(0);
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stack"></div>
+  <div id="collapse">收起</div>
+  <div id="stage"><img id="sprite" alt=""></div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  var ATLAS = { columns: 8, frameWidth: 192, frameHeight: 208 };
+  var STATES = {
+    idle: { row: 0, frames: 6, ms: 1100 },
+    'running-right': { row: 1, frames: 8, ms: 1060 },
+    'running-left': { row: 2, frames: 8, ms: 1060 },
+    waving: { row: 3, frames: 4, ms: 700 },
+    jumping: { row: 4, frames: 5, ms: 840 },
+    failed: { row: 5, frames: 8, ms: 1220 },
+    waiting: { row: 6, frames: 6, ms: 1010 },
+    running: { row: 7, frames: 6, ms: 820 },
+    review: { row: 8, frames: 6, ms: 1030 }
+  };
+
+  var ICON = {
+    done: '<svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.2" fill="#3fb950"/><path d="M4.6 8.2l2.2 2.2 4.5-4.6" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    failed: '<svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.2" fill="#f85149"/><path d="M5.3 5.3l5.4 5.4M10.7 5.3l-5.4 5.4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    waiting: '<span class="dot"></span>',
+    active: '<span class="spinner"></span>'
+  };
+
+  var root = document.getElementById('root');
+  var stack = document.getElementById('stack');
+  var collapse = document.getElementById('collapse');
+  var stage = document.getElementById('stage');
+  var sprite = document.getElementById('sprite');
+
+  var settings = {
+    scale: 1,
+    bubbles: true,
+    fontSize: 13,
+    maxWidth: 320,
+    lifetime: 8,
+    bubbleColor: '#0f0f0f',
+    bubbleOpacity: 100,
+    bubbleTextColor: '#ffffff'
+  };
+  var current = 'idle';
+  var spriteState = null;
+  var spriteHold = null;
+  var natural = null;
+  var lastSeq = -1;
+  var idleTimer = 0;
+
+  var sessions = [];
+  var lastActivityAt = 0;
+  var expanded = false;
+  var dragging = false;
+  var hidden = {};          // sessionId -> revision hidden by its timer
+  var elements = {};        // sessionId -> { el, title, line, icon, ... }
+  var structureKey = '';
+  var hideTimers = {};
+
+  function post(message) {
+    try {
+      window.webkit.messageHandlers.petdex.postMessage(message);
+    } catch (error) {
+      /* running outside the shell */
+    }
+  }
+
+  var lastSize = { width: 0, height: 0 };
+  function reportSize() {
+    var width = root.offsetWidth;
+    var height = root.offsetHeight;
+    if (width === lastSize.width && height === lastSize.height) return;
+    lastSize = { width: width, height: height };
+    post({ type: 'size', width: width, height: height });
+  }
+
+  /** Report bubble hit regions so the shell can tell a click from a drag. */
+  function reportRegions() {
+    var rects = [];
+    var nodes = stack.querySelectorAll('.bubble');
+    for (var i = 0; i < nodes.length; i += 1) {
+      var r = nodes[i].getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        rects.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+    }
+    var cr = collapse.getBoundingClientRect();
+    if (collapse.style.display !== 'none' && cr.width > 0) {
+      rects.push({ x: cr.left, y: cr.top, w: cr.width, h: cr.height });
+    }
+    post({ type: 'regions', regions: rects });
+  }
+
+  function detectRows(width, height) {
+    if (!(width > 0) || !(height > 0)) return 9;
+    var ratio = height / width;
+    var candidates = [{ rows: 9, ratio: 9 / 8 }, { rows: 11, ratio: 11 / 8 }];
+    var best = candidates[0];
+    for (var i = 1; i < candidates.length; i += 1) {
+      if (Math.abs(candidates[i].ratio - ratio) < Math.abs(best.ratio - ratio)) best = candidates[i];
+    }
+    return Math.abs(best.ratio - ratio) < 0.05 ? best.rows : 9;
+  }
+
+  function keyframes() {
+    var css = '';
+    Object.keys(STATES).forEach(function (name) {
+      var state = STATES[name];
+      var shift = (state.frames / ATLAS.columns) * 100;
+      css += '@keyframes petdex-' + name +
+        ' { from { transform: translateX(0); } to { transform: translateX(-' + shift + '%); } }\n';
+    });
+    var style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function layout() {
+    var scale = settings.scale;
+    var width = Math.round(ATLAS.frameWidth * scale);
+    var height = Math.round(ATLAS.frameHeight * scale);
+    stage.style.width = width + 'px';
+    stage.style.height = height + 'px';
+    if (natural) {
+      var rows = detectRows(natural.width, natural.height);
+      var rowHeight = natural.height / rows;
+      var definition = STATES[current] || STATES.idle;
+      sprite.style.width = natural.width * scale + 'px';
+      sprite.style.height = natural.height * scale + 'px';
+      sprite.style.top = (-definition.row * rowHeight * scale) + 'px';
+    }
+    root.style.setProperty('--bubble-width', settings.maxWidth + 'px');
+    root.style.setProperty('--bubble-font', settings.fontSize + 'px');
+    reportSize();
+    reportRegions();
+  }
+
+  /**
+   * Play a sprite state. Repeat calls with the same state/hold are ignored:
+   * streamed text updates must not restart the CSS animation on every chunk.
+   */
+  function play(name, hold, force) {
+    if (!STATES[name]) name = 'idle';
+    hold = !!hold;
+    if (!force && spriteState === name && spriteHold === hold) return;
+    spriteState = name;
+    spriteHold = hold;
+    current = name;
+    var definition = STATES[name];
+    sprite.style.animation = 'none';
+    void sprite.offsetWidth;
+    sprite.style.animation = 'petdex-' + name + ' ' + definition.ms +
+      'ms steps(' + definition.frames + ') infinite';
+    layout();
+    window.clearTimeout(idleTimer);
+    if (!hold) {
+      idleTimer = window.setTimeout(function () {
+        play('idle', true);
+      }, Math.max(1400, definition.ms * 2));
+    }
+  }
+
+  // -------------------------------------------------------------- bubble style
+  function hexRgb(hex) {
+    var match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    if (!match) return [34, 37, 42];
+    return [parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16)];
+  }
+
+  function isLight(color) {
+    var rgb = hexRgb(color);
+    return rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 > 155;
+  }
+
+  function applyBubbleStyle() {
+    var opacity = Math.min(100, Math.max(0, Number(settings.bubbleOpacity) || 0)) / 100;
+    var color = /^#[0-9a-f]{6}$/i.test(settings.bubbleColor) ? settings.bubbleColor : '#0f0f0f';
+    var textColor = /^#[0-9a-f]{6}$/i.test(settings.bubbleTextColor) ? settings.bubbleTextColor : '#ffffff';
+    var textRgb = hexRgb(textColor);
+    root.style.setProperty('--bubble-bg', color);
+    root.style.setProperty('--bubble-alpha', String(opacity));
+    root.style.setProperty('--bubble-fg', textColor);
+    root.style.setProperty('--shimmer-hi', textColor);
+    root.style.setProperty('--shimmer-lo', 'rgba(' + textRgb[0] + ',' + textRgb[1] + ',' + textRgb[2] + ',.45)');
+  }
+
+  // -------------------------------------------------------------- bubble content
+  function flatten(text) {
+    return String(text ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  function isActive(status) {
+    return status === 'thinking' || status === 'generating' || status === 'tool' ||
+      status === 'working' || status === 'starting' || status === 'active';
+  }
+
+  function iconKey(session) {
+    if (session.status === 'done') return 'done';
+    if (session.status === 'failed' || session.status === 'blocked') return 'failed';
+    if (session.status === 'waiting') return 'waiting';
+    if (isActive(session.status)) return 'active';
+    return 'done';
+  }
+
+  function statusLine(session) {
+    if (session.status === 'generating') {
+      var text = flatten(session.detail);
+      if (text !== '') return text;
+      return '正在生成回复';
+    }
+    var label = session.label ? flatten(session.label) : '';
+    if (label === '') {
+      if (session.status === 'done') label = '已完成';
+      else if (session.status === 'failed') label = '出错了';
+      else if (session.status === 'waiting') label = '等待你的操作';
+      else if (session.status === 'tool') label = '正在运行命令';
+      else if (session.status === 'working') label = '正在分析请求';
+      else label = '';
+    }
+    var detail = flatten(session.detail);
+    if (detail !== '' && label !== '') return label + ' · ' + detail;
+    return label;
+  }
+
+  function makeBubble(session, extraCount) {
+    var el = document.createElement('div');
+    el.className = 'bubble';
+    el.setAttribute('role', 'button');
+    el.innerHTML =
+      '<div class="bubble-head">' +
+        '<span class="bubble-icon"></span>' +
+        '<span class="bubble-title"></span>' +
+        (extraCount > 0 ? '<span class="bubble-count">+' + extraCount + '</span>' : '') +
+      '</div>' +
+      '<div class="bubble-line"></div>';
+
+    var entry = {
+      el: el,
+      icon: el.querySelector('.bubble-icon'),
+      title: el.querySelector('.bubble-title'),
+      line: el.querySelector('.bubble-line'),
+      iconKey: null,
+      titleText: null,
+      lineText: null,
+      lineClass: null
+    };
+
+    el.addEventListener('click', function (event) {
+      event.stopPropagation();
+      if (sessions.length > 1 && !expanded) {
+        expanded = true;
+        render(true);
+        return;
+      }
+      post({ type: 'open', sessionId: session.id, url: session.open || 'dsh://open' });
+    });
+
+    elements[session.id] = entry;
+    return entry;
+  }
+
+  function applyBubble(entry, session) {
+    var key = iconKey(session);
+    if (entry.iconKey !== key) {
+      entry.iconKey = key;
+      entry.icon.innerHTML = ICON[key];
+    }
+
+    var title = session.title || '新会话';
+    if (entry.titleText !== title) {
+      entry.titleText = title;
+      entry.title.textContent = title;
+      entry.title.title = title;
+    }
+
+    var text = statusLine(session);
+    if (entry.lineText !== text) {
+      entry.lineText = text;
+      entry.line.textContent = text;
+      entry.line.title = text;
+    }
+
+    var className = 'bubble-line' + (isActive(session.status) ? ' shimmer' : '');
+    if (entry.lineClass !== className) {
+      entry.lineClass = className;
+      entry.line.className = className;
+    }
+  }
+
+  function visibleSessions() {
+    return sessions.filter(function (session) {
+      if (session.hold) return true;
+      return hidden[session.id] !== session.rev;
+    });
+  }
+
+  function scheduleHide(session) {
+    window.clearTimeout(hideTimers[session.id]);
+    if (session.hold || !(settings.lifetime > 0)) return;
+    hideTimers[session.id] = window.setTimeout(function () {
+      hidden[session.id] = session.rev;
+      render(true);
+      applyActivitySprite(false);
+    }, settings.lifetime * 1000);
+  }
+
+  function render(force) {
+    var list = visibleSessions();
+    if (!settings.bubbles || list.length === 0) {
+      stack.innerHTML = '';
+      elements = {};
+      collapse.style.display = 'none';
+      structureKey = '';
+      reportSize();
+      reportRegions();
+      return;
+    }
+
+    var multi = list.length > 1;
+    var show = (multi && !expanded) ? [list[0]] : list;
+    var key = (multi ? (expanded ? 'x' : 'c') : 's') + ':' + show.map(function (s) { return s.id; }).join(',');
+
+    if (force || key !== structureKey) {
+      structureKey = key;
+      stack.innerHTML = '';
+      elements = {};
+      for (var i = 0; i < show.length; i += 1) {
+        var entry = makeBubble(show[i], i === 0 && multi && !expanded ? list.length - 1 : 0);
+        stack.appendChild(entry.el);
+      }
+      collapse.style.display = multi && expanded ? 'block' : 'none';
+    }
+
+    for (var j = 0; j < show.length; j += 1) {
+      var session = show[j];
+      var target = elements[session.id];
+      if (!target) continue;
+      applyBubble(target, session);
+      scheduleHide(session);
+    }
+
+    collapse.textContent = '收起';
+    requestAnimationFrame(function () {
+      reportSize();
+      reportRegions();
+    });
+  }
+
+  // --------------------------------------------------------------- sprite state
+  function activitySprite() {
+    var holder = null;
+    for (var i = 0; i < sessions.length; i += 1) {
+      if (sessions[i].hold) { holder = sessions[i]; break; }
+    }
+    if (holder && holder.state) return { state: holder.state, hold: true };
+    if (sessions.length === 0) return { state: 'idle', hold: true };
+    if (sessions[0].state === 'waving' || sessions[0].state === 'failed') {
+      return { state: sessions[0].state, hold: false };
+    }
+    return { state: 'idle', hold: true };
+  }
+
+  function applyActivitySprite(force) {
+    if (dragging) return;
+    var target = activitySprite();
+    play(target.state, target.hold, force);
+  }
+
+  function wave() {
+    if (!natural) return;
+    play('waving', false, true);
+  }
+
+  // Drag hooks from the native shell: run left/right with the drag direction.
+  window.__petdexDrag = function (direction) {
+    if (!natural) return;
+    dragging = true;
+    play(direction === 'left' ? 'running-left' : 'running-right', true, true);
+  };
+  window.__petdexDragEnd = function () {
+    dragging = false;
+    applyActivitySprite(true);
+  };
+
+  // Safety net: a missed terminal event must not leave the pet running forever.
+  setInterval(function () {
+    if (sessions.length === 0) return;
+    var now = Date.now();
+    var changed = false;
+    sessions = sessions.map(function (session) {
+      if (!session.hold) return session;
+      var limit = session.status === 'tool' ? 120000 : 45000;
+      if (now - lastActivityAt <= limit) return session;
+      changed = true;
+      return {
+        id: session.id,
+        title: session.title,
+        status: null,
+        label: null,
+        detail: null,
+        tokens: session.tokens,
+        state: 'idle',
+        hold: false,
+        rev: session.rev,
+        open: session.open
+      };
+    });
+    if (!changed) return;
+    render(false);
+    applyActivitySprite(false);
+  }, 5000);
+
+  window.__petdex = function (next) {
+    if (!next || typeof next !== 'object') return;
+    var previousLayout = settings.scale + '|' + settings.fontSize + '|' + settings.maxWidth;
+    var previousStyle = settings.bubbleColor + '|' + settings.bubbleOpacity + '|' + settings.bubbleTextColor;
+    if (typeof next.scale === 'number') settings.scale = next.scale;
+    if (typeof next.bubbles === 'boolean') settings.bubbles = next.bubbles;
+    if (typeof next.fontSize === 'number') settings.fontSize = next.fontSize;
+    if (typeof next.maxWidth === 'number') settings.maxWidth = next.maxWidth;
+    if (typeof next.lifetime === 'number') settings.lifetime = next.lifetime;
+    if (typeof next.bubbleColor === 'string') settings.bubbleColor = next.bubbleColor;
+    if (typeof next.bubbleOpacity === 'number') settings.bubbleOpacity = next.bubbleOpacity;
+    if (typeof next.bubbleTextColor === 'string') settings.bubbleTextColor = next.bubbleTextColor;
+    if (previousStyle !== settings.bubbleColor + '|' + settings.bubbleOpacity + '|' + settings.bubbleTextColor) {
+      applyBubbleStyle();
+    }
+
+    if (next.sprite && sprite.getAttribute('data-src') !== next.sprite) {
+      sprite.setAttribute('data-src', next.sprite);
+      sprite.src = next.sprite;
+    }
+
+    if (next.activity && typeof next.activity.seq === 'number' && next.activity.seq !== lastSeq) {
+      lastSeq = next.activity.seq;
+      lastActivityAt = Date.now();
+      if (Array.isArray(next.activity.sessions)) {
+        sessions = next.activity.sessions;
+      } else if (next.activity.text) {
+        // Older host versions wrote a single { state, text } activity.
+        sessions = [{
+          id: 'legacy',
+          title: 'Harness',
+          status: next.activity.hold ? 'working' : 'done',
+          label: next.activity.text,
+          detail: null,
+          tokens: 0,
+          state: next.activity.state || 'idle',
+          hold: !!next.activity.hold,
+          rev: next.activity.seq,
+          open: 'dsh://open'
+        }];
+      } else {
+        sessions = [];
+      }
+
+      sessions.forEach(function (session) {
+        if (hidden[session.id] !== undefined && hidden[session.id] !== session.rev) {
+          delete hidden[session.id];
+        }
+      });
+      if (sessions.length <= 1) expanded = false;
+
+      render(false);
+      applyActivitySprite(false);
+    }
+
+    if (!settings.bubbles) {
+      stack.innerHTML = '';
+      elements = {};
+      collapse.style.display = 'none';
+      structureKey = '';
+      reportSize();
+      reportRegions();
+    }
+    if (previousLayout !== settings.scale + '|' + settings.fontSize + '|' + settings.maxWidth) layout();
+    else if (!sprite.style.animation) play('idle', true, true);
+  };
+
+  window.__petdexClick = wave;
+
+  collapse.addEventListener('click', function (event) {
+    event.stopPropagation();
+    expanded = false;
+    render(true);
+  });
+
+  sprite.addEventListener('load', function () {
+    if (sprite.naturalWidth > 0) {
+      natural = { width: sprite.naturalWidth, height: sprite.naturalHeight };
+      post({ type: 'debug', event: 'sprite', width: natural.width, height: natural.height });
+    }
+    layout();
+    play(current, true, true);
+  });
+
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(function () { reportSize(); reportRegions(); }).observe(root);
+  }
+
+  applyBubbleStyle();
+  keyframes();
+  layout();
+  play('idle', true, true);
+  post({ type: 'ready' });
+})();
+</script>
+</body>
+</html>

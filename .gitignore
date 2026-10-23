@@ -1,0 +1,6 @@
+.build-cache/
+desktop/.build-cache/
+.DS_Store
+*.log
+node_modules/
+desktop/web/.test-sprite.webp

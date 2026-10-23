@@ -1,0 +1,4 @@
+# dsh-petpal bundle patch: inserts the Host half, which the Client half calls.
+- insert:
+    - id: dsh-petpal
+      name: 'dsh-petpal'

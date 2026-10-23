@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Petdex pets">
+  <rect width="64" height="64" rx="14" fill="#FBE7C6"/>
+  <circle cx="18" cy="21" r="7" fill="#9C683D"/>
+  <circle cx="46" cy="21" r="7" fill="#9C683D"/>
+  <rect x="11" y="17" width="42" height="34" rx="17" fill="#B07A4A"/>
+  <circle cx="32" cy="13" r="5.5" fill="#F59E42"/>
+  <path d="M32 8.5c1.6 0 2.6 1.4 2.2 2.8" stroke="#4C7A34" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <ellipse cx="32" cy="43" rx="13" ry="9" fill="#E9C9A3"/>
+  <circle cx="24.5" cy="32" r="2.3" fill="#3B2415"/>
+  <circle cx="39.5" cy="32" r="2.3" fill="#3B2415"/>
+  <rect x="29" y="38" width="6" height="4" rx="2" fill="#5A3A22"/>
+</svg>

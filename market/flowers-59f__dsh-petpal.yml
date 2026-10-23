@@ -1,0 +1,6 @@
+url: https://github.com/flowers-59f/dsh-petpal
+name: flowers-59f/dsh-petpal
+category: ui
+description:
+  en: "macOS desktop pets for DeepSeek Harness: download petdex.dev pets by identifier or page link into ~/.dsh/pets, switch the active one, and show it in a transparent always-on-top companion window with session-title status bubbles, drag-direction animations, and configurable appearance."
+  zh: "DeepSeek Harness 的 macOS 桌面宠物：按宠物标识或宠物页面链接把 petdex.dev 的宠物下载到 ~/.dsh/pets，随时切换；在透明置顶窗口里显示当前宠物，气泡展示会话标题与当前动作，支持拖动方向动画和外观配置。"
