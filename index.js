@@ -4,8 +4,10 @@
  * Owns a pet library under `$DSH_HOME/pets`, downloads pets from petdex.dev in
  * the same format Codex and Petdex use (pet.json + an 8-column sprite atlas),
  * and runs the bundled desktop companion (desktop/PetdexPet.app on macOS,
- * desktop/windows/PetPal.exe on Windows) so the pet keeps living after the
- * Harness window closes.
+ * desktop/windows/PetPal.exe on Windows). The companion is its own process, not
+ * page content, so the pet stays on screen when the Harness window is closed;
+ * it watches `PETDEX_PARENT_PID` and exits within 2s of Harness going away, so a
+ * quit never leaves an orphan behind.
  *
  * Everything the companion needs is a file under `<pets>/.petdex`:
  *   ui.json        active pet + appearance settings (also written by the app
