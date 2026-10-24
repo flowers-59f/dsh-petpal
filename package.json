@@ -34,7 +34,8 @@
     "desktop/windows/LICENSE.webp",
     "desktop/windows/THIRD-PARTY-NOTICES.md",
     "screenshots.json",
-    "docs/bubble.png"
+    "docs/bubble.png",
+    "docs/screenshots/*.png"
   ],
   "scripts": {
     "test": "node test/render.test.mjs && node test/boot.test.mjs && node test/notification.test.mjs"
