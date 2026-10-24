@@ -35,7 +35,8 @@
     "desktop/windows/THIRD-PARTY-NOTICES.md",
     "screenshots.json",
     "docs/bubble.png",
-    "docs/screenshots/*.png"
+    "docs/screenshots/*.png",
+    "docs/badges/*.svg"
   ],
   "scripts": {
     "test": "node test/render.test.mjs && node test/boot.test.mjs && node test/notification.test.mjs"

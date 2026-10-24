@@ -2,11 +2,11 @@
 
 **给 DeepSeek Harness 养一只桌面宠物，Agent 需要你时用企业微信喊你。**
 
-![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.2.1-6f42c1)
-![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-macOS%2012%2B%20%7C%20Windows%2010%2B-blue)
-![桌面端](https://img.shields.io/badge/%E6%A1%8C%E9%9D%A2%E7%AB%AF-Swift%20%7C%20WPF-orange)
-![通知](https://img.shields.io/badge/%E9%80%9A%E7%9F%A5-%E4%BC%81%E4%B8%9A%E5%BE%AE%E4%BF%A1-07c160)
-![License](https://img.shields.io/badge/license-MIT-green)
+![DSH ≥ 0.2.1](docs/badges/dsh.svg)
+![平台：macOS 12+ / Windows 10+](docs/badges/platform.svg)
+![桌面端：Swift / WPF](docs/badges/desktop.svg)
+![通知：企业微信](docs/badges/notify.svg)
+![License: MIT](docs/badges/license.svg)
 
 ---
 
