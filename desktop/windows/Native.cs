@@ -34,7 +34,7 @@ namespace PetPal
             public int Y;
         }
 
-        [DllImport("user32.dll")]
+        [DllImport("user32.dll", EntryPoint = "GetCursorPos", ExactSpelling = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetCursorPosNative(out POINT point);
 
@@ -157,7 +157,7 @@ namespace PetPal
             SetWindowLong32(hWnd, nIndex, unchecked((int)value));
         }
 
-        [DllImport("user32.dll", SetLastError = true)]
+        [DllImport("user32.dll", EntryPoint = "SetWindowPos", ExactSpelling = true, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool SetWindowPosNative(
             IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
